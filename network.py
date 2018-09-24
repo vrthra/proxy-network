@@ -141,15 +141,20 @@ class QPolicy(Policy):
     def next(self, req):
         global path
         global topology
-        #GLIE
+        # GLIE - Greedy in the limit, with infinite exploration
+        # slowly converge to pure greedy as time steps increase.
+        # * If a state is visited infinitely often, then each action
+        #   In that state is chosen infinitely often
+        # * In the limit, the learning policy is greedy wrt the
+        #   learned Q function with probability 1
         self._t += 1
         s = rand(self._t) + 1
-        if s == 1:
+        if s == 1: # Exploration
             len_ = len(topology[self._proxy.name()]['next'])
             s = rand(len_)
             path.append('*')
             return topology[self._proxy.name()]['next'][s]
-        else:
+        else: # Greedy
             proxy = self._q.max_a(req.domain())
             return proxy
 
