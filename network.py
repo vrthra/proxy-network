@@ -8,6 +8,8 @@ LEVEL_CONST = 100
 
 Num_Origin = 10
 My_Pages = 10
+Alpha = 0.1
+Beta = 1
 
 def max_level():
     """ The average number of hops for a request before reaching origin """
@@ -25,43 +27,43 @@ def proxy_name(lvl, rank): return lvl*LEVEL_CONST + rank
 
 class Cache:
     def __init__(self, max_size=4):
-        self._data = {}
-        self._max_size = max_size
-    def max_size(self): return self._max_size
+        self._data, self._max_size = {}, max_size
+
     def store(self, key, value):
         self._data[key] = [0, value]
-        self.age_keys
-        self.prune
+        self.age_keys()
+        self.prune()
+
     def read(self, key):
         if key not in self._data: return None
         value = self._data[key]
         self.renew(key)
         self.age_keys()
         return value[1]
-    def renew(self, key):
-        self._data[key][0] = 0
+
+    def renew(self, key): self._data[key][0] = 0
+
     def delete_oldest(self):
-        m = max(i[0] for i in self._data.value)
+        m = max(i[0] for i in self._data.values())
         self._data = {k:v for k,v in self._data.items() if v[0] == m}
+
     def age_keys(self):
         for k in self._data: self._data[k][0] += 1
+
     def prune(self):
         if len(self._data) > self._max_size: self.delete_oldest()
 
-class Request:
-    def __init__(self, url):
-        self._url = url
-        match = re.search('http:\/\/([a-z0-9:]+)\/(.*)$', url, re.IGNORECASE)
-        if not match: raise Error('Not matched')
-        self._domain = match.group(1)
-        self._page = match.group(2)
+class HTTPRequest:
+    def __init__(self, domain, page):
+        self._domain, self._page = domain, page
+        self._url = 'http://%s/%s' % (domain, page)
     def domain(self): return self._domain
     def page(self): return self._page
     def header(self): return None
     def url(self): return self._url
 
-class Response:
-    def __init__(self, domain, url, content, header, status):
+class HTTPResponse:
+    def __init__(self, domain, url, content, header, status=200):
         self._page = {'domain': domain, 'url': url, 'content': content, 'header': header}
         self._status = status
         self._page['header']['Q'] = 0
@@ -76,9 +78,8 @@ class HTTPServer:
     def domain(self): return self._domain
     def __init__(self, domain, pages):
         self._domain = domain
-        self._page = {}
-        for path in pages:
-            self._page[path] = Response(domain,path,"< A page from #{domain}/#{p} >",{}, 200)
+        self._page = {path:HTTPResponse(domain,path, "< A page from %s/%s >"
+            % (domain, path),{}) for path in pages}
     def get(self, path): return self._page[path]
 
 class Reward:
@@ -94,13 +95,14 @@ class Reward:
 
 class Q:
     def __init__(self, parents):
-        self._q = {}
-        self._parents = parents
+        self._parents, self._q = parents, {}
     
     def get_q(self, s_url_domain,a_parent):
         key = self.to_key(s_url_domain,a_parent)
-        if key not in self._q: self._q[key] = 0
+        if key not in self._q:
+            self._q[key] = 0
         return self._q[key]
+
     def put_q(self, s_url_domain, a_parent, value):
         key = self.to_key(s_url_domain,a_parent)
         self._q[key] = value
@@ -120,32 +122,22 @@ class Q:
         return 'url[%s]: parent[%d]' % (s_url_domain,a_parent)
 
 class Policy:
-    def __init__(self, proxy, q):
-        self._proxy = proxy;
-    def next(self, req):
-        global topology
-        # greedy. Just return the first policy found.
-        return topology[self._proxy.name()]['next'][0]
-    def update(self, domain,proxy,last_max_q, reward):
-        pass
-    def max_a_val(self, domain): return 0
+    def __init__(self, proxy, q): self._proxy, self._q = proxy, q
+    def next(self, req): pass
+    def update(self, domain,proxy,last_max_q, reward): pass
+    def max_a_val(self, domain): pass
 
-class QPolicy:
-    def __init__(self, proxy,q):
+class QPolicy(Policy):
+    def __init__(self, proxy, q):
         self._proxy = proxy
-        self._alpha = 0.1
-        self._beta = 1
-        # our q value estimate may be based on
-        # the load of the server
-        # if the url is in the cache
-        # or the cache hit ratio
-        # RAM available
-        # uptime
+        self._alpha, self._beta = Alpha, Beta
 
         # Action is the next server to choose from
         self._q = q
         self._t = 0
+
     def q(self): return self._q
+
     def next(self, req):
         global path
         global topology
@@ -165,6 +157,7 @@ class QPolicy:
         a_parent = self._q.max_a(s_url_domain)
         val = self._q.get_q(s_url_domain, a_parent)
         return val
+
     def update(self, s_url_domain, a_parent, last_max_q, reward):
         # Q(a,s)  = (1-alpha)*Q(a,s) + alpha(R(s) + beta*max_a(Q(a_,s_)))
         # the a is self here.
@@ -186,7 +179,9 @@ class ProxyNode:
         self._policy = QPolicy(self, self._q)
         self._reward = Reward(self)
         self._cache = Cache()
+
     def policy(self): return self._policy
+
     def load(self):
         v = rand(2)
         if v == 0:
@@ -207,8 +202,8 @@ class ProxyNode:
             # reset the load now because after denying the requests the load
             # should be lower.
             self._load = rand(100)+1
-            res = Response(req.domain(),req.url(),'Can not service',
-                    {'last_proxy': self._name}, 501)
+            res = HTTPResponse(req.domain(),req.url(),
+                    'Can not service', {'last_proxy': self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
             res.set_reward(my_reward)
             reward.append(my_reward)
@@ -238,8 +233,8 @@ class ProxyNode:
                reward.append(my_reward)
                return res
         if self._name < LEVEL_CONST*2:
-            res = Response(req.domain(),req.url(),'Can not service',
-                    {'last_proxy':  self._name}, 501)
+            res = HTTPResponse(req.domain(),req.url(),
+                    'Can not service', {'last_proxy':  self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
             res.set_reward(my_reward)
             reward.append(my_reward)
@@ -386,7 +381,7 @@ for i in range(1,iter_total+1):
     for j in range(1,total+1):
         page = "path-%s/page.html" % (rand(10)+1)
         server_id = rand(10) + 1
-        req = Request("http://" + str(server_id) + '/' + page)
+        req = HTTPRequest(str(server_id), page)
         res = n.user_req(req)
         trejectory = ''.join([j + '>' for j in path]) + ("*" if res.status() == 200 else "X") + "  " + req.domain()
         #puts trejectory
