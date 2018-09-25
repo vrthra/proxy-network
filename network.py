@@ -96,7 +96,7 @@ class Reward:
 class Q:
     def __init__(self, parents):
         self._parents, self._q = parents, {}
-    
+
     def get_q(self, s_url_domain,a_parent):
         key = self.to_key(s_url_domain,a_parent)
         if key not in self._q:
@@ -106,7 +106,7 @@ class Q:
     def put_q(self, s_url_domain, a_parent, value):
         key = self.to_key(s_url_domain,a_parent)
         self._q[key] = value
-    
+
     def max_a(self,s_url_domain):
         # best next server for this state.
         srv = self._parents[0]
@@ -117,7 +117,7 @@ class Q:
                maxq = q
                srv = a_p
         return srv
-    
+
     def to_key(self, s_url_domain, a_parent):
         return 'url[%s]: parent[%d]' % (s_url_domain,a_parent)
 
@@ -139,7 +139,7 @@ class QPolicy(Policy):
     def q(self): return self._q
 
     def next(self, req):
-        global path
+        global g_path
         global topology
         # GLIE - Greedy in the limit, with infinite exploration
         # slowly converge to pure greedy as time steps increase.
@@ -152,7 +152,7 @@ class QPolicy(Policy):
         if s == 1: # Exploration
             len_ = len(topology[self._proxy.name()]['next'])
             s = random.randint(0, len_-1)
-            path.append('*')
+            g_path.append('*')
             return topology[self._proxy.name()]['next'][s]
         else: # Greedy
             proxy = self._q.max_a(req.domain())
@@ -201,59 +201,61 @@ class ProxyNode:
     # it returns back a hashmap that contains the body of response
     # and a few headers.
     def request(self, req):
-        global path, reward 
+        global g_path, g_reward
         # if the load is too high, decline the request.
         if self._load >= 100:
             # reset the load now because after denying the requests the load
             # should be lower.
             self._load = random.randint(1, 100)
             res = HTTPResponse(req.domain(),req.url(),
-                    'Can not service', {'last_proxy': self._name}, 501)
+                    "Can't service", {'last_proxy': self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
             res.set_reward(my_reward)
-            reward.append(my_reward)
+            g_reward.append(my_reward)
             return res
         s = self._cache[req.url()]
         if s is not None:
-            path.append(str(self._name))
-            path.append("+")
+            g_path.append(self._name)
+            g_path.append("+")
             my_reward = self._reward.get_reward('CacheHit')
             s.set_reward(my_reward)
-            reward.append(my_reward)
+            g_reward.append(my_reward)
             return s
         res = self._request(req)
         if res.status() == 200:
             self._cache[req.url()] = res
         return res
 
+    def is_edge(self): return self._name < LEVEL_CONST*2
+
+    def knows_origin(self, domain): return domain in self._domains
+
     def _request(self, req):
-        global path, reward 
+        global g_path, g_reward
         res = None
-        path.append(str(self._name))
-        for dom in self._domains:
-           if int(req.domain()) == dom:
-               res = self.fetch(req)
-               my_reward = self._reward.get_reward('EndPoint')
-               res.set_reward(my_reward)
-               reward.append(my_reward)
-               return res
-        if self._name < LEVEL_CONST*2:
+        g_path.append(self._name)
+        # is this one of the domains we can serve?
+        if self.knows_origin(req.domain()):
+           res = self.fetch(req)
+           my_reward = self._reward.get_reward('EndPoint')
+           res.set_reward(my_reward)
+           g_reward.append(my_reward)
+           return res
+        elif self.is_edge():
             res = HTTPResponse(req.domain(),req.url(),
-                    'Can not service', {'last_proxy':  self._name}, 501)
+                    "Can't service", {'last_proxy':  self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
             res.set_reward(my_reward)
-            reward.append(my_reward)
+            g_reward.append(my_reward)
             return res
         else:
             res = self.forward(req)
             my_reward = self._reward.get_reward('MidWay')
             res.set_reward(my_reward)
-            reward.append(my_reward)
+            g_reward.append(my_reward)
             return res
-    
-    def fetch(self, req):
-        global server
-        return server[int(req.domain())].get(req.page())
+
+    def fetch(self, req): return self._domains[req.domain()].get(req.page())
 
     def forward(self, req):
         #puts "req at #{self._name}"
@@ -261,10 +263,10 @@ class ProxyNode:
         res =  proxy_db(proxy).request(req)
         # updaate q
         last_max_q = int(res.get_q_header())
-        
+
         reward = res.get_reward()
         self._policy.update(req.domain(),proxy,last_max_q, reward)
-        
+
         # find the q value for the next best server for domain
         next_q = self._policy.max_a_val(req.domain())
         res.set_q_header(next_q)
@@ -272,8 +274,9 @@ class ProxyNode:
 
 topology = {}
 proxydb = {}
+server = {}
 def proxy_db(p):
-    global proxydb
+    global proxydb, server
     # lookup and return proxy server.
     if p not in proxydb:
         kind = 'Proxy'
@@ -282,11 +285,11 @@ def proxy_db(p):
             # with ids 101, 102 etc. where the origins are
             # 1,2,...
             # We no longer have parents.
-            domains = topology[p]['next']
+            domains = {i:server[i] for i in topology[p]['next']}
             parents = []
             kind = 'Edge'
         else:
-            domains = []
+            domains = {}
             parents = topology[p]['next']
         proxy = ProxyNode(p, domains, parents, kind, topology[p]['load'])
         proxydb[p] = proxy
@@ -300,12 +303,12 @@ class Network:
         """
         num_parents = Num_Parents()
         direct_parent = p_id - LEVEL_CONST
-        parent_proxies = [direct_parent]
+        parent_proxies = {direct_parent}
         for i in range(1,num_parents+1):
             another_rank = (rank + random.randint(0, num_parents-1)) % network_width + 1
             another_id = another_rank + (lvl-1)*LEVEL_CONST
-            parent_proxies.append(another_id)
-        return unique(parent_proxies)
+            parent_proxies.add(another_id)
+        return list(parent_proxies)
 
     def populate_origin_servers(self):
         # construct the origin servers
@@ -315,26 +318,27 @@ class Network:
             server[i] = HTTPServer("domain%d.com" % i, pages)
         return server
 
-    def populate_proxy_servers(self):
+    def populate_proxy_servers(self, servers):
         # Links between proxies
         proxies = {}
-        
+
         network_levels = Max_Level()
         network_width = Max_Width()
-        
+
         for lvl in range(1,network_levels+1):
             for rank in range(1,network_width+1):
                 p_id = proxy_name(lvl, rank)
-                proxies[p_id] = self.parents(p_id,lvl,rank,network_width) 
+                proxies[p_id] = self.parents(p_id,lvl,rank,network_width)
         return self.init_loads(proxies)
 
     def __init__(self):
         # construct the initial topology
         global topology
         global server
-        server = self.populate_origin_servers()
+        self.server = self.populate_origin_servers()
+        server = self.server
         #self._user_proxy = initial_proxies
-        topology = self.populate_proxy_servers()
+        topology = self.populate_proxy_servers(server)
 
     def init_loads(self, proxies):
         network = {}
@@ -349,7 +353,7 @@ class Network:
         return network
     def load(self):
         return random.randint(1,100)
-    
+
     def user_req(self, req):
         #---------------------------------------
         # Modify here for first level proxy
@@ -371,12 +375,12 @@ class Network:
             l = layer*10
             for proxy in range(1, 5):
                 p = proxy_db(proxy + l)
-                x = p.policy.q.max_a(str(domain))
+                x = p.policy.q.max_a(domain)
                 print(" " + str(p.name()) + " (" + str(x) + ")")
             print()
 
-path = []
-reward = []
+g_path = []
+g_reward = []
 n = Network()
 iter_total = 100
 max_count = 0
@@ -386,15 +390,15 @@ for i in range(1,iter_total+1):
     for j in range(1,total+1):
         page = "path-%s/page.html" % (random.randint(1,10))
         server_id = random.randint(1,10)
-        req = HTTPRequest(str(server_id), page)
+        req = HTTPRequest(server_id, page)
         res = n.user_req(req)
-        trejectory = ''.join([j + '>' for j in path]) + ("*" if res.status() == 200 else "X") + "  " + req.domain()
+        trejectory = ''.join([str(j) + '>' for j in g_path]) + ("*" if res.status() == 200 else "X") + "  " + str(req.domain())
         #puts trejectory
-        my_reward = ' '.join([str(j) for j in reward])
-        total_reward = sum(reward)
+        my_reward = ' '.join([str(j) for j in g_reward])
+        total_reward = sum(g_reward)
         #puts "reward:(#{total_reward}) #{my_reward}"
-        path = []
-        reward = []
+        g_path = []
+        g_reward = []
         if res.status() > 500: count += 1
     print("%d/%d" % (count,total))
     #puts "Loads:"
