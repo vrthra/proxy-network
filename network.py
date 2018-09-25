@@ -5,16 +5,6 @@ import re, random
 Alpha = 0.1
 Beta = 1
 
-def Max_Level():
-    """ The average number of hops for a request before reaching origin """
-    return 10
-def Max_Width():
-    """ The average number of proxy servers at each level """
-    return 10
-def Num_Parents():
-    """ The number of parent servers per proxy """
-    return 2
-
 def unique(lst): return list(set(lst))
 
 class Cache:
@@ -261,10 +251,18 @@ class ProxyNode:
         return res
 
 class Network:
+
     def __init__(self, lvl_const, num_origin, num_pages):
         self._lvl_const = lvl_const
         self._num_origin = num_origin
         self._num_pages = num_pages
+
+        # The number of parent servers per proxy
+        self._num_parents = 2
+        # The average number of proxy servers at each level
+        self._max_width = 10
+        # The average number of hops for a request before reaching origin
+        self._max_level = 10
 
         # construct the initial topology
         self.servers = self.populate_origin_servers()
@@ -283,11 +281,10 @@ class Network:
         Identify two random proxy servers in the level up as the parents for
         each proxy server.
         """
-        num_parents = Num_Parents()
         direct_parent = p_id - self._lvl_const
         parent_proxies = {direct_parent}
-        for i in range(1,num_parents+1):
-            another_rank = (rank + random.randint(0, num_parents-1)) % network_width + 1
+        for i in range(1,self._num_parents+1):
+            another_rank = (rank + random.randint(0, self._num_parents-1)) % network_width + 1
             another_id = another_rank + (lvl-1)*self._lvl_const
             parent_proxies.add(another_id)
         return list(parent_proxies)
@@ -304,8 +301,8 @@ class Network:
         # Links between proxies
         proxies = {}
 
-        network_levels = Max_Level()
-        network_width = Max_Width()
+        network_levels = self._max_level
+        network_width = self._max_width
 
         for lvl in range(1,network_levels+1):
             for rank in range(1,network_width+1):
@@ -333,7 +330,7 @@ class Network:
         # Modify here for first level proxy
         # get our first level proxy. Here it is 10X
         #---------------------------------------
-        proxy = self.proxy_name(Max_Level(), random.randint(1, Max_Width()))
+        proxy = self.proxy_name(self._max_level, random.randint(1, self._max_width))
         # print("req starting at %s for %s" % (proxy, req.domain()))
         # print(req.url())
         res = self._db[proxy].request(req)
