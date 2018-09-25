@@ -71,7 +71,7 @@ class Reward:
 
 class Q:
     def __init__(self, parents):
-        self._parents, self._q = list(parents.values()), {}
+        self._parents, self._q = list(parents.keys()), {}
 
     def __getitem__(self, val):
         key = self.to_key(val)
@@ -90,8 +90,7 @@ class Q:
         return srv
 
     def to_key(self, val):
-        s_url_domain, a_parent = val
-        return 'domain[%s]: proxy[%d]' % (s_url_domain,a_parent.name())
+        return 'domain[%s]: proxy[%d]' % val
 
 class Policy:
     def __init__(self, proxy, q): self._proxy, self._q = proxy, q
@@ -120,7 +119,7 @@ class QPolicy(Policy):
         s = random.randint(0, self._time_step)
         self._time_step += 1
         if s == 0: # Exploration
-            return random.choice(list(self._proxy._parents.values()))
+            return random.choice(list(self._proxy._parents.keys()))
         else: # Greedy
             return self._q.max_a(req.domain())
 
@@ -189,7 +188,7 @@ class ProxyNode:
 
     def forward(self, req):
         proxy = self._policy.next_hop(req)
-        res =  proxy.request(req)
+        res =  self._parents[proxy].request(req)
         # update q
         last_max_q = int(res.get_q_header())
 
