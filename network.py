@@ -75,8 +75,7 @@ class Q:
 
     def get_q(self, s_url_domain,a_parent):
         key = self.to_key(s_url_domain,a_parent)
-        if key not in self._q:
-            self._q[key] = 0
+        if key not in self._q: self._q[key] = 0
         return self._q[key]
 
     def put_q(self, s_url_domain, a_parent, value):
@@ -89,9 +88,7 @@ class Q:
         maxq = self.get_q(s_url_domain, srv)
         for a_p in self._parents:
            q = self.get_q(s_url_domain, a_p)
-           if q > maxq:
-               maxq = q
-               srv = a_p
+           if q > maxq: maxq, srv = q, a_p
         return srv
 
     def to_key(self, s_url_domain, a_parent):
@@ -207,17 +204,16 @@ class ProxyNode:
 
 class Network:
 
-    def __init__(self, lvl_const, num_origin, num_pages):
+    def __init__(self, lvl_const, num_origin, num_pages, num_parents, network_width, network_levels):
         self._lvl_const = lvl_const
         self._num_origin = num_origin
         self._num_pages = num_pages
-
         # The number of parent servers per proxy
-        self._num_parents = 2
+        self._num_parents = num_parents
         # The average number of proxy servers at each level
-        self.network_width = 10
+        self.network_width = network_width
         # The average number of hops for a request before reaching origin
-        self.network_levels = 10
+        self.network_levels = network_levels
 
         # construct the initial topology
         self.servers = self.populate_origin_servers()
@@ -240,8 +236,7 @@ class Network:
         parent_proxies = {direct_parent}
         for i in range(1,self._num_parents+1):
             another_rank = (rank + random.randint(0, self._num_parents-1)) % network_width + 1
-            another_id = self.proxy_name(lvl-1, another_rank)
-            parent_proxies.add(another_id)
+            parent_proxies.add(self.proxy_name(lvl-1, another_rank))
         return list(parent_proxies)
 
     def populate_origin_servers(self):
@@ -265,21 +260,14 @@ class Network:
     def create_proxy(self, p, parents):
         if p not in self._db:
             if self.is_edge(p):
-                # We no longer have parents.
-                domains = {p:self.servers[p] for p in parents}
-                parents = {}
+                domains, parents = {p:self.servers[p] for p in parents}, {}
             else:
-                domains = {}
-                parents = {p:self._db[p] for p in parents}
+                domains, parents = {}, {p:self._db[p] for p in parents}
             proxy = ProxyNode(p, domains, parents)
             self._db[p] = proxy
         return self._db[p]
 
     def user_req(self, req):
-        #---------------------------------------
-        # Modify here for first level proxy
-        # get our first level proxy. Here it is 10X
-        #---------------------------------------
         proxy = self.proxy_name(self.network_levels, random.randint(1, self.network_width))
         # print("req starting at %s for %s" % (proxy, req.domain()))
         # print(req.url())
@@ -288,17 +276,13 @@ class Network:
 
 # LEVEL_CONST is the maximum number of proxy servers in a level, so that
 # we can look at a proxy and determine which level it is.
-Level_Const = 100
-Num_Origin = 10
-Num_Pages = 10
-
-My_Network = Network(Level_Const, Num_Origin, Num_Pages)
-iter_total = 100
+Level_Const, Num_Origin, Num_Pages, Num_Parents, Network_Width, Network_Levels = 100, 10, 10, 2, 10, 10
+My_Network = Network(Level_Const, Num_Origin, Num_Pages, Num_Parents, Network_Width, Network_Levels)
+iter_total, total = 100, 100
 max_count = 0
 for i in range(iter_total):
     count = 0
-    total = 100
-    for j in range(1,total+1):
+    for j in range(total):
         page = "path-%s/page.html" % (random.randint(1,10))
         server_id = random.randint(1,10)
         req = HTTPRequest(server_id, page)
