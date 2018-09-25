@@ -2,12 +2,6 @@
 import re, random
 #random.seed(0)
 
-# LEVEL_CONST is the maximum number of proxy servers in a level, so that
-# we can look at a proxy and determine which level it is.
-LEVEL_CONST = 100
-
-Num_Origin = 10
-My_Pages = 10
 Alpha = 0.1
 Beta = 1
 
@@ -22,8 +16,6 @@ def Num_Parents():
     return 2
 
 def unique(lst): return list(set(lst))
-
-def proxy_name(lvl, rank): return lvl*LEVEL_CONST + rank
 
 class Cache:
     def __init__(self, max_size=4):
@@ -95,7 +87,7 @@ class Reward:
 
 class Q:
     def __init__(self, parents):
-        self._parents, self._q = parents, {}
+        self._parents, self._q = list(parents.values()), {}
 
     def get_q(self, s_url_domain,a_parent):
         key = self.to_key(s_url_domain,a_parent)
@@ -119,7 +111,7 @@ class Q:
         return srv
 
     def to_key(self, s_url_domain, a_parent):
-        return 'url[%s]: parent[%d]' % (s_url_domain,a_parent)
+        return 'url[%s]: parent[%d]' % (s_url_domain,a_parent.name())
 
 class Policy:
     def __init__(self, proxy, q): self._proxy, self._q = proxy, q
@@ -134,26 +126,23 @@ class QPolicy(Policy):
 
         # Action is the next server to choose from
         self._q = q
-        self._t = 0
+        self._time_step = 0
 
     def q(self): return self._q
 
     def next(self, req):
         global g_path
-        global topology
         # GLIE - Greedy in the limit, with infinite exploration
         # slowly converge to pure greedy as time steps increase.
         # * If a state is visited infinitely often, then each action
         #   In that state is chosen infinitely often
         # * In the limit, the learning policy is greedy wrt the
         #   learned Q function with probability 1
-        self._t += 1
-        s = random.randint(1, self._t)
-        if s == 1: # Exploration
-            len_ = len(topology[self._proxy.name()]['next'])
-            s = random.randint(0, len_-1)
+        s = random.randint(0, self._time_step)
+        self._time_step += 1
+        if s == 0: # Exploration
             g_path.append('*')
-            return topology[self._proxy.name()]['next'][s]
+            return random.choice(list(self._proxy._parents.values()))
         else: # Greedy
             proxy = self._q.max_a(req.domain())
             return proxy
@@ -174,9 +163,8 @@ class QPolicy(Policy):
 # each proxy is able to reach a fixed set of domains. for others, it has to
 # rely on parents.
 class ProxyNode:
-    def __init__(self, name, domains, parents, kind, load):
+    def __init__(self, name, domains, parents, load):
         self._name = name
-        self._kind = kind
         self._load = load
         self._parents = parents
         self._domains = domains
@@ -226,7 +214,7 @@ class ProxyNode:
             self._cache[req.url()] = res
         return res
 
-    def is_edge(self): return self._name < LEVEL_CONST*2
+    def is_edge(self): return My_Network.is_edge(self._name)
 
     def knows_origin(self, domain): return domain in self._domains
 
@@ -260,7 +248,7 @@ class ProxyNode:
     def forward(self, req):
         #puts "req at #{self._name}"
         proxy = self._policy.next(req)
-        res =  proxy_db(proxy).request(req)
+        res =  proxy.request(req)
         # updaate q
         last_max_q = int(res.get_q_header())
 
@@ -272,53 +260,47 @@ class ProxyNode:
         res.set_q_header(next_q)
         return res
 
-topology = {}
-proxydb = {}
-server = {}
-def proxy_db(p):
-    global proxydb, server
-    # lookup and return proxy server.
-    if p not in proxydb:
-        kind = 'Proxy'
-        if p < LEVEL_CONST*2:
-            # we are an edge proxy. That is, servers
-            # with ids 101, 102 etc. where the origins are
-            # 1,2,...
-            # We no longer have parents.
-            domains = {i:server[i] for i in topology[p]['next']}
-            parents = []
-            kind = 'Edge'
-        else:
-            domains = {}
-            parents = topology[p]['next']
-        proxy = ProxyNode(p, domains, parents, kind, topology[p]['load'])
-        proxydb[p] = proxy
-    return proxydb[p]
-
 class Network:
+    def __init__(self, lvl_const, num_origin, num_pages):
+        self._lvl_const = lvl_const
+        self._num_origin = num_origin
+        self._num_pages = num_pages
+
+        # construct the initial topology
+        self.servers = self.populate_origin_servers()
+        self.proxies = self.populate_proxy_servers()
+        self._db = {}
+        for p in sorted(self.proxies.keys()):
+            self.create_proxy(p, self.proxies[p])
+
+    def proxy_name(self, lvl, rank): return lvl*self._lvl_const + rank
+    # an edge proxy. That is, servers
+    # with ids 101, 102 etc. where the origins are
+    # 1,2,...
+    def is_edge(self, i): return i <  self._lvl_const*2
     def parents(self,p_id,lvl,rank,network_width):
         """
         Identify two random proxy servers in the level up as the parents for
         each proxy server.
         """
         num_parents = Num_Parents()
-        direct_parent = p_id - LEVEL_CONST
+        direct_parent = p_id - self._lvl_const
         parent_proxies = {direct_parent}
         for i in range(1,num_parents+1):
             another_rank = (rank + random.randint(0, num_parents-1)) % network_width + 1
-            another_id = another_rank + (lvl-1)*LEVEL_CONST
+            another_id = another_rank + (lvl-1)*self._lvl_const
             parent_proxies.add(another_id)
         return list(parent_proxies)
 
     def populate_origin_servers(self):
         # construct the origin servers
         server = {}
-        for i in range(1,Num_Origin+1):
-            pages = ["path-%d/page.html" % page for page in range(1,My_Pages+1)]
+        for i in range(1,self._num_origin+1):
+            pages = ["path-%d/page.html" % page for page in range(1,self._num_pages+1)]
             server[i] = HTTPServer("domain%d.com" % i, pages)
         return server
 
-    def populate_proxy_servers(self, servers):
+    def populate_proxy_servers(self):
         # Links between proxies
         proxies = {}
 
@@ -327,89 +309,62 @@ class Network:
 
         for lvl in range(1,network_levels+1):
             for rank in range(1,network_width+1):
-                p_id = proxy_name(lvl, rank)
+                p_id = self.proxy_name(lvl, rank)
                 proxies[p_id] = self.parents(p_id,lvl,rank,network_width)
-        return self.init_loads(proxies)
+        return proxies
 
-    def __init__(self):
-        # construct the initial topology
-        global topology
-        global server
-        self.server = self.populate_origin_servers()
-        server = self.server
-        #self._user_proxy = initial_proxies
-        topology = self.populate_proxy_servers(server)
+    def create_proxy(self, p, parents):
+        if p not in self._db:
+            if self.is_edge(p):
+                # We no longer have parents.
+                domains = {p:self.servers[p] for p in parents}
+                parents = {}
+            else:
+                domains = {}
+                parents = {p:self._db[p] for p in parents}
+            proxy = ProxyNode(p, domains, parents, self.gen_load())
+            self._db[p] = proxy
+        return self._db[p]
 
-    def init_loads(self, proxies):
-        network = {}
-        parents = 0
-        count = 0
-        for p_id in proxies.keys():
-            parents += len(proxies[p_id])
-            count += 1
-            network[p_id] = {'next': proxies[p_id], 'load': self.load()}
-        print("==================================")
-        print("degree = %d/%d = %f" % (parents, count, (parents * 1.0)/(count * 1.0)))
-        return network
-    def load(self):
-        return random.randint(1,100)
+    def gen_load(self): return random.randint(1,100)
 
     def user_req(self, req):
         #---------------------------------------
         # Modify here for first level proxy
         # get our first level proxy. Here it is 10X
         #---------------------------------------
-        proxy = proxy_name(Max_Level(), random.randint(1, Max_Width()))
-        #print("req starting at %s for %s" % (proxy, req.domain()))
-        #print(req.url())
-        res = proxy_db(proxy).request(req)
+        proxy = self.proxy_name(Max_Level(), random.randint(1, Max_Width()))
+        # print("req starting at %s for %s" % (proxy, req.domain()))
+        # print(req.url())
+        res = self._db[proxy].request(req)
         return res
-    def show_loads(self):
-        for layer in range(1,5):
-            for proxy in range(1, 5):
-                n = layer*10 + proxy
-                print(" " + str(n) + "(" + str(topology[n]['load'])+ ")")
-            print()
-    def show_max(self, domain):
-        for layer in range(1, 5):
-            l = layer*10
-            for proxy in range(1, 5):
-                p = proxy_db(proxy + l)
-                x = p.policy.q.max_a(domain)
-                print(" " + str(p.name()) + " (" + str(x) + ")")
-            print()
 
 g_path = []
 g_reward = []
-n = Network()
+# LEVEL_CONST is the maximum number of proxy servers in a level, so that
+# we can look at a proxy and determine which level it is.
+Level_Const = 100
+Num_Origin = 10
+Num_Pages = 10
+
+My_Network = Network(Level_Const, Num_Origin, Num_Pages)
 iter_total = 100
 max_count = 0
-for i in range(1,iter_total+1):
+for i in range(iter_total):
     count = 0
     total = 100
     for j in range(1,total+1):
         page = "path-%s/page.html" % (random.randint(1,10))
         server_id = random.randint(1,10)
         req = HTTPRequest(server_id, page)
-        res = n.user_req(req)
+        res = My_Network.user_req(req)
         trejectory = ''.join([str(j) + '>' for j in g_path]) + ("*" if res.status() == 200 else "X") + "  " + str(req.domain())
-        #puts trejectory
-        my_reward = ' '.join([str(j) for j in g_reward])
-        total_reward = sum(g_reward)
-        #puts "reward:(#{total_reward}) #{my_reward}"
+        print(trejectory)
         g_path = []
         g_reward = []
         if res.status() > 500: count += 1
     print("%d/%d" % (count,total))
-    #puts "Loads:"
-    #puts "---------------#{i}"
     max_count = i
     if count == 0: break
-    #n.show_loads
-    #(1..10).each do |i|
-    #  puts "MaxAVal: " + i.to_s
-    #  puts "---------------"
-    #  n.show_max(i)
-    #end
 print("maxcount: ",max_count)
 
