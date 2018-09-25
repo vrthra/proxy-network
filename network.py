@@ -71,7 +71,7 @@ class Reward:
 
 class Q:
     def __init__(self, parents):
-        self._parents, self._q = list(parents.keys()), {}
+        self.parents, self._q = parents, {}
 
     def __getitem__(self, val):
         key = self.to_key(val)
@@ -82,9 +82,9 @@ class Q:
 
     def max_a(self,s_url_domain):
         # best next server for this state.
-        srv = self._parents[0]
+        srv = self.parents[0]
         maxq = self[(s_url_domain, srv)]
-        for a_p in self._parents:
+        for a_p in self.parents:
            q = self[(s_url_domain, a_p)]
            if q > maxq: maxq, srv = q, a_p
         return srv
@@ -142,7 +142,7 @@ class ProxyNode:
         self._name = name
         self._parents = parents
         self._domains = domains
-        self._q = Q(parents)
+        self._q = Q(list(parents.keys()))
         self._policy = QPolicy(self, self._q)
         self._reward = Reward()
         self._cache = Cache()
