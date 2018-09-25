@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 import re, random
-#random.seed(0)
+random.seed(0)
 
 Alpha = 0.1
 Beta = 1
-
-def unique(lst): return list(set(lst))
 
 class Cache:
     def __init__(self, max_size=4):
@@ -50,19 +48,20 @@ class HTTPResponse:
         self._status = status
         self._page['header']['Q'] = 0
     def __str__(self): return self._page['url']
-    def set_reward(self, r): self._page['header']['QReward'] = str(r)
-    def get_reward(self): return int(self._page['header']['QReward'])
+    def set_reward_header(self, r): self._page['header']['QReward'] = str(r)
+    def get_reward_header(self): return int(self._page['header']['QReward'])
     def get_q_header(self): return self._page['header']['Q']
     def set_q_header(self, value): self._page['header']['Q'] = value
     def status(self): return self._status
 
 class HTTPServer:
     def domain(self): return self._domain
-    def __init__(self, domain, pages):
+    def __init__(self, domain, paths):
         self._domain = domain
-        self._page = {path:HTTPResponse(domain,path, "< A page from %s/%s >"
-            % (domain, path),{}) for path in pages}
-    def get(self, path): return self._page[path]
+        self._pages = {path:HTTPResponse(domain,path,
+            "< A page from %s/%s >" % (domain, path),{})
+            for path in paths}
+    def get(self, path): return self._pages[path]
 
 class Reward:
     def __init__(self, proxy): self._proxy = proxy
@@ -188,7 +187,7 @@ class ProxyNode:
             res = HTTPResponse(req.domain(),req.url(),
                     "Can't service", {'last_proxy': self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
-            res.set_reward(my_reward)
+            res.set_reward_header(my_reward)
             g_reward.append(my_reward)
             return res
         s = self._cache[req.url()]
@@ -196,7 +195,7 @@ class ProxyNode:
             g_path.append(self._name)
             g_path.append("+")
             my_reward = self._reward.get_reward('CacheHit')
-            s.set_reward(my_reward)
+            s.set_reward_header(my_reward)
             g_reward.append(my_reward)
             return s
         res = self._request(req)
@@ -216,20 +215,20 @@ class ProxyNode:
         if self.knows_origin(req.domain()):
            res = self.fetch(req)
            my_reward = self._reward.get_reward('EndPoint')
-           res.set_reward(my_reward)
+           res.set_reward_header(my_reward)
            g_reward.append(my_reward)
            return res
         elif self.is_edge():
             res = HTTPResponse(req.domain(),req.url(),
                     "Can't service", {'last_proxy':  self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
-            res.set_reward(my_reward)
+            res.set_reward_header(my_reward)
             g_reward.append(my_reward)
             return res
         else:
             res = self.forward(req)
             my_reward = self._reward.get_reward('MidWay')
-            res.set_reward(my_reward)
+            res.set_reward_header(my_reward)
             g_reward.append(my_reward)
             return res
 
@@ -242,7 +241,7 @@ class ProxyNode:
         # updaate q
         last_max_q = int(res.get_q_header())
 
-        reward = res.get_reward()
+        reward = res.get_reward_header()
         self._policy.update(req.domain(),proxy,last_max_q, reward)
 
         # find the q value for the next best server for domain
@@ -293,8 +292,8 @@ class Network:
         # construct the origin servers
         server = {}
         for i in range(1,self._num_origin+1):
-            pages = ["path-%d/page.html" % page for page in range(1,self._num_pages+1)]
-            server[i] = HTTPServer("domain%d.com" % i, pages)
+            paths = ["path-%d/page.html" % page for page in range(1,self._num_pages+1)]
+            server[i] = HTTPServer("domain%d.com" % i, paths)
         return server
 
     def populate_proxy_servers(self):
