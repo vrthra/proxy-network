@@ -73,21 +73,23 @@ class Q:
     def __init__(self, parents):
         self._parents, self._q = list(parents.values()), {}
 
-    def get_q(self, s_url_domain,a_parent):
+    def __getitem__(self, val):
+        s_url_domain,a_parent = val
         key = self.to_key(s_url_domain,a_parent)
         if key not in self._q: self._q[key] = 0
         return self._q[key]
 
-    def put_q(self, s_url_domain, a_parent, value):
+    def __setitem__(self, val, value):
+        s_url_domain, a_parent = val
         key = self.to_key(s_url_domain,a_parent)
         self._q[key] = value
 
     def max_a(self,s_url_domain):
         # best next server for this state.
         srv = self._parents[0]
-        maxq = self.get_q(s_url_domain, srv)
+        maxq = self[(s_url_domain, srv)]
         for a_p in self._parents:
-           q = self.get_q(s_url_domain, a_p)
+           q = self[(s_url_domain, a_p)]
            if q > maxq: maxq, srv = q, a_p
         return srv
 
@@ -127,14 +129,14 @@ class QPolicy(Policy):
 
     def max_a_val(self, s_url_domain):
         a_parent = self._q.max_a(s_url_domain)
-        return self._q.get_q(s_url_domain, a_parent)
+        return self._q[(s_url_domain, a_parent)]
 
     def update(self, s_url_domain, a_parent, last_max_q, reward):
         # Q(a,s)  = (1-alpha)*Q(a,s) + alpha(R(s) + beta*max_a(Q(a_,s_)))
         # the a is self here.
-        q_now = self._q.get_q(s_url_domain, a_parent)
+        q_now = self._q[(s_url_domain, a_parent)]
         q_new = (1 - self._alpha) * q_now + self._alpha*(reward + self._beta*last_max_q)
-        self._q.put_q(s_url_domain, a_parent, q_new)
+        self._q[(s_url_domain, a_parent)] = q_new
 
 # each proxy node maintains its own q(s,a) value
 # each proxy is able to reach a fixed set of domains. for others, it has to
@@ -274,7 +276,7 @@ class Network:
         res = self._db[proxy].request(req)
         return res
 
-# LEVEL_CONST is the maximum number of proxy servers in a level, so that
+# Level_Const is the maximum number of proxy servers in a level, so that
 # we can look at a proxy and determine which level it is.
 Level_Const, Num_Origin, Num_Pages, Num_Parents, Network_Width, Network_Levels = 100, 10, 10, 2, 10, 10
 My_Network = Network(Level_Const, Num_Origin, Num_Pages, Num_Parents, Network_Width, Network_Levels)
