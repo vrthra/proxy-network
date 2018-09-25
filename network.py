@@ -99,7 +99,7 @@ class Q:
 
 class Policy:
     def __init__(self, proxy, q): self._proxy, self._q = proxy, q
-    def next(self, req): pass
+    def next_hop(self, req): pass
     def update(self, domain,proxy,last_max_q, reward): pass
     def max_a_val(self, domain): pass
 
@@ -114,7 +114,7 @@ class QPolicy(Policy):
 
     def q(self): return self._q
 
-    def next(self, req):
+    def next_hop(self, req):
         # GLIE - Greedy in the limit, with infinite exploration
         # slowly converge to pure greedy as time steps increase.
         # * If a state is visited infinitely often, then each action
@@ -161,8 +161,7 @@ class ProxyNode:
     def request(self, req):
         res = self._cache[req.url()]
         if res is not None:
-            my_reward = self._reward.CacheHit
-            res.set_reward_header(my_reward)
+            res.set_reward_header(self._reward.CacheHit)
             return res
         res = self._request(req)
         if res.status() == 200:
@@ -173,33 +172,29 @@ class ProxyNode:
 
     def knows_origin(self, domain): return domain in self._domains
 
+    def fetch(self, req): return self._domains[req.domain()].get(req.page())
+
     def _request(self, req):
         res = None
         # is this one of the domains we can serve?
         if self.knows_origin(req.domain()):
            res = self.fetch(req)
-           my_reward = self._reward.EndPoint
-           res.set_reward_header(my_reward)
+           res.set_reward_header(self._reward.EndPoint)
            return res
         elif self.is_edge():
             res = HTTPResponse(req.domain(),req.url(),
                     "Can't service", {'last_proxy':  self._name}, 501)
-            my_reward = self._reward.NoService
-            res.set_reward_header(my_reward)
+            res.set_reward_header(self._reward.NoService)
             return res
         else:
             res = self.forward(req)
-            my_reward = self._reward.MidWay
-            res.set_reward_header(my_reward)
+            res.set_reward_header(self._reward.MidWay)
             return res
 
-    def fetch(self, req): return self._domains[req.domain()].get(req.page())
-
     def forward(self, req):
-        #puts "req at #{self._name}"
-        proxy = self._policy.next(req)
+        proxy = self._policy.next_hop(req)
         res =  proxy.request(req)
-        # updaate q
+        # update q
         last_max_q = int(res.get_q_header())
 
         reward = res.get_reward_header()
