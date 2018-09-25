@@ -74,15 +74,11 @@ class Q:
         self._parents, self._q = list(parents.values()), {}
 
     def __getitem__(self, val):
-        s_url_domain,a_parent = val
-        key = self.to_key(s_url_domain,a_parent)
+        key = self.to_key(val)
         if key not in self._q: self._q[key] = 0
         return self._q[key]
 
-    def __setitem__(self, val, value):
-        s_url_domain, a_parent = val
-        key = self.to_key(s_url_domain,a_parent)
-        self._q[key] = value
+    def __setitem__(self, val, value): self._q[self.to_key(val)] = value
 
     def max_a(self,s_url_domain):
         # best next server for this state.
@@ -93,7 +89,8 @@ class Q:
            if q > maxq: maxq, srv = q, a_p
         return srv
 
-    def to_key(self, s_url_domain, a_parent):
+    def to_key(self, val):
+        s_url_domain, a_parent = val
         return 'domain[%s]: proxy[%d]' % (s_url_domain,a_parent.name())
 
 class Policy:
