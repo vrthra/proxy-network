@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import re, random
-random.seed(0)
+#random.seed(0)
 
 Alpha = 0.1
 Beta = 1
@@ -64,15 +64,10 @@ class HTTPServer:
     def get(self, path): return self._pages[path]
 
 class Reward:
-    def __init__(self, proxy): self._proxy = proxy
-    def get_reward(self, status):
-        # if we are not the end point, just return -1 * load
-        # if we are, then return (100 - load)
-        if status == 'MidWay': return -1 * self._proxy.load()
-        if status == 'EndPoint': return 500
-        if status == 'CacheHit': return 500
-        if status == 'NoService': return -500
-        assert False
+    MidWay = -1
+    EndPoint = 500
+    CacheHit = 500
+    NoService = -500
 
 class Q:
     def __init__(self, parents):
@@ -100,7 +95,7 @@ class Q:
         return srv
 
     def to_key(self, s_url_domain, a_parent):
-        return 'url[%s]: parent[%d]' % (s_url_domain,a_parent.name())
+        return 'domain[%s]: proxy[%d]' % (s_url_domain,a_parent.name())
 
 class Policy:
     def __init__(self, proxy, q): self._proxy, self._q = proxy, q
@@ -120,7 +115,6 @@ class QPolicy(Policy):
     def q(self): return self._q
 
     def next(self, req):
-        global g_path
         # GLIE - Greedy in the limit, with infinite exploration
         # slowly converge to pure greedy as time steps increase.
         # * If a state is visited infinitely often, then each action
@@ -130,16 +124,13 @@ class QPolicy(Policy):
         s = random.randint(0, self._time_step)
         self._time_step += 1
         if s == 0: # Exploration
-            g_path.append('*')
             return random.choice(list(self._proxy._parents.values()))
         else: # Greedy
-            proxy = self._q.max_a(req.domain())
-            return proxy
+            return self._q.max_a(req.domain())
 
     def max_a_val(self, s_url_domain):
         a_parent = self._q.max_a(s_url_domain)
-        val = self._q.get_q(s_url_domain, a_parent)
-        return val
+        return self._q.get_q(s_url_domain, a_parent)
 
     def update(self, s_url_domain, a_parent, last_max_q, reward):
         # Q(a,s)  = (1-alpha)*Q(a,s) + alpha(R(s) + beta*max_a(Q(a_,s_)))
@@ -152,52 +143,27 @@ class QPolicy(Policy):
 # each proxy is able to reach a fixed set of domains. for others, it has to
 # rely on parents.
 class ProxyNode:
-    def __init__(self, name, domains, parents, load):
+    def __init__(self, name, domains, parents):
         self._name = name
-        self._load = load
         self._parents = parents
         self._domains = domains
         self._q = Q(parents)
         self._policy = QPolicy(self, self._q)
-        self._reward = Reward(self)
+        self._reward = Reward()
         self._cache = Cache()
 
     def policy(self): return self._policy
 
-    def load(self):
-        v = random.randint(0, 1)
-        if v == 0:
-            self._load += 1
-        else:
-            self._load -= 1
-        if self._load < 0 :
-            self._load = 0
-        return self._load
     def name(self): return self._name
     # use this proxy to send request.
     # it returns back a hashmap that contains the body of response
     # and a few headers.
     def request(self, req):
-        global g_path, g_reward
-        # if the load is too high, decline the request.
-        if self._load >= 100:
-            # reset the load now because after denying the requests the load
-            # should be lower.
-            self._load = random.randint(1, 100)
-            res = HTTPResponse(req.domain(),req.url(),
-                    "Can't service", {'last_proxy': self._name}, 501)
-            my_reward = self._reward.get_reward('NoService')
+        res = self._cache[req.url()]
+        if res is not None:
+            my_reward = self._reward.CacheHit
             res.set_reward_header(my_reward)
-            g_reward.append(my_reward)
             return res
-        s = self._cache[req.url()]
-        if s is not None:
-            g_path.append(self._name)
-            g_path.append("+")
-            my_reward = self._reward.get_reward('CacheHit')
-            s.set_reward_header(my_reward)
-            g_reward.append(my_reward)
-            return s
         res = self._request(req)
         if res.status() == 200:
             self._cache[req.url()] = res
@@ -208,28 +174,23 @@ class ProxyNode:
     def knows_origin(self, domain): return domain in self._domains
 
     def _request(self, req):
-        global g_path, g_reward
         res = None
-        g_path.append(self._name)
         # is this one of the domains we can serve?
         if self.knows_origin(req.domain()):
            res = self.fetch(req)
-           my_reward = self._reward.get_reward('EndPoint')
+           my_reward = self._reward.EndPoint
            res.set_reward_header(my_reward)
-           g_reward.append(my_reward)
            return res
         elif self.is_edge():
             res = HTTPResponse(req.domain(),req.url(),
                     "Can't service", {'last_proxy':  self._name}, 501)
-            my_reward = self._reward.get_reward('NoService')
+            my_reward = self._reward.NoService
             res.set_reward_header(my_reward)
-            g_reward.append(my_reward)
             return res
         else:
             res = self.forward(req)
-            my_reward = self._reward.get_reward('MidWay')
+            my_reward = self._reward.MidWay
             res.set_reward_header(my_reward)
-            g_reward.append(my_reward)
             return res
 
     def fetch(self, req): return self._domains[req.domain()].get(req.page())
@@ -259,9 +220,9 @@ class Network:
         # The number of parent servers per proxy
         self._num_parents = 2
         # The average number of proxy servers at each level
-        self._max_width = 10
+        self.network_width = 10
         # The average number of hops for a request before reaching origin
-        self._max_level = 10
+        self.network_levels = 10
 
         # construct the initial topology
         self.servers = self.populate_origin_servers()
@@ -284,7 +245,7 @@ class Network:
         parent_proxies = {direct_parent}
         for i in range(1,self._num_parents+1):
             another_rank = (rank + random.randint(0, self._num_parents-1)) % network_width + 1
-            another_id = another_rank + (lvl-1)*self._lvl_const
+            another_id = self.proxy_name(lvl-1, another_rank)
             parent_proxies.add(another_id)
         return list(parent_proxies)
 
@@ -300,13 +261,10 @@ class Network:
         # Links between proxies
         proxies = {}
 
-        network_levels = self._max_level
-        network_width = self._max_width
-
-        for lvl in range(1,network_levels+1):
-            for rank in range(1,network_width+1):
+        for lvl in range(1,self.network_levels+1):
+            for rank in range(1,self.network_width+1):
                 p_id = self.proxy_name(lvl, rank)
-                proxies[p_id] = self.parents(p_id,lvl,rank,network_width)
+                proxies[p_id] = self.parents(p_id,lvl,rank,self.network_width)
         return proxies
 
     def create_proxy(self, p, parents):
@@ -318,25 +276,21 @@ class Network:
             else:
                 domains = {}
                 parents = {p:self._db[p] for p in parents}
-            proxy = ProxyNode(p, domains, parents, self.gen_load())
+            proxy = ProxyNode(p, domains, parents)
             self._db[p] = proxy
         return self._db[p]
-
-    def gen_load(self): return random.randint(1,100)
 
     def user_req(self, req):
         #---------------------------------------
         # Modify here for first level proxy
         # get our first level proxy. Here it is 10X
         #---------------------------------------
-        proxy = self.proxy_name(self._max_level, random.randint(1, self._max_width))
+        proxy = self.proxy_name(self.network_levels, random.randint(1, self.network_width))
         # print("req starting at %s for %s" % (proxy, req.domain()))
         # print(req.url())
         res = self._db[proxy].request(req)
         return res
 
-g_path = []
-g_reward = []
 # LEVEL_CONST is the maximum number of proxy servers in a level, so that
 # we can look at a proxy and determine which level it is.
 Level_Const = 100
@@ -354,10 +308,6 @@ for i in range(iter_total):
         server_id = random.randint(1,10)
         req = HTTPRequest(server_id, page)
         res = My_Network.user_req(req)
-        trejectory = ''.join([str(j) + '>' for j in g_path]) + ("*" if res.status() == 200 else "X") + "  " + str(req.domain())
-        print(trejectory)
-        g_path = []
-        g_reward = []
         if res.status() > 500: count += 1
     print("%d/%d" % (count,total))
     max_count = i
