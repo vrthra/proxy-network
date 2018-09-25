@@ -87,7 +87,7 @@ class Q:
         return srv
 
 class QPolicy:
-    def __init__(self, q): self._q, self._time_step = q, 0
+    def __init__(self, lst): self._q, self._time_step = Q(lst), 0
 
     def q(self): return self._q
 
@@ -119,8 +119,7 @@ class QPolicy:
 class ProxyNode:
     def __init__(self, name, domains, parents):
         self._name, self._parents, self._domains = name, parents, domains
-        self._q = Q(list(parents.keys()))
-        self._policy = QPolicy(self._q)
+        self._policy = QPolicy(list(parents.keys()))
         self._reward = Reward()
         self._cache = Cache()
 
