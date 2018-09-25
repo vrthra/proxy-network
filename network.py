@@ -11,13 +11,13 @@ My_Pages = 10
 Alpha = 0.1
 Beta = 1
 
-def max_level():
+def Max_Level():
     """ The average number of hops for a request before reaching origin """
     return 10
-def max_width():
+def Max_Width():
     """ The average number of proxy servers at each level """
     return 10
-def get_degree():
+def Num_Parents():
     """ The number of parent servers per proxy """
     return 2
 
@@ -29,29 +29,29 @@ class Cache:
     def __init__(self, max_size=4):
         self._data, self._max_size = {}, max_size
 
-    def store(self, key, value):
+    def __setitem__(self, key, value):
         self._data[key] = [0, value]
-        self.age_keys()
-        self.prune()
+        self._age_keys()
+        self._prune()
 
-    def read(self, key):
+    def __getitem__(self, key):
         if key not in self._data: return None
         value = self._data[key]
-        self.renew(key)
-        self.age_keys()
+        self._renew(key)
+        self._age_keys()
         return value[1]
 
-    def renew(self, key): self._data[key][0] = 0
+    def _renew(self, key): self._data[key][0] = 0
 
-    def delete_oldest(self):
+    def _delete_oldest(self):
         m = max(i[0] for i in self._data.values())
         self._data = {k:v for k,v in self._data.items() if v[0] == m}
 
-    def age_keys(self):
+    def _age_keys(self):
         for k in self._data: self._data[k][0] += 1
 
-    def prune(self):
-        if len(self._data) > self._max_size: self.delete_oldest()
+    def _prune(self):
+        if len(self._data) > self._max_size: self._delete_oldest()
 
 class HTTPRequest:
     def __init__(self, domain, page):
@@ -213,7 +213,7 @@ class ProxyNode:
             res.set_reward(my_reward)
             reward.append(my_reward)
             return res
-        s = self._cache.read(req.url())
+        s = self._cache[req.url()]
         if s is not None:
             path.append(str(self._name))
             path.append("+")
@@ -223,7 +223,7 @@ class ProxyNode:
             return s
         res = self._request(req)
         if res.status() == 200:
-            self._cache.store(req.url(),res)
+            self._cache[req.url()] = res
         return res
 
     def _request(self, req):
@@ -298,7 +298,7 @@ class Network:
         Identify two random proxy servers in the level up as the parents for
         each proxy server.
         """
-        num_parents = get_degree()
+        num_parents = Num_Parents()
         direct_parent = p_id - LEVEL_CONST
         parent_proxies = [direct_parent]
         for i in range(1,num_parents+1):
@@ -319,8 +319,8 @@ class Network:
         # Links between proxies
         proxies = {}
         
-        network_levels = max_level()
-        network_width = max_width()
+        network_levels = Max_Level()
+        network_width = Max_Width()
         
         for lvl in range(1,network_levels+1):
             for rank in range(1,network_width+1):
@@ -355,7 +355,7 @@ class Network:
         # Modify here for first level proxy
         # get our first level proxy. Here it is 10X
         #---------------------------------------
-        proxy = proxy_name(max_level(), random.randint(1, max_width()))
+        proxy = proxy_name(Max_Level(), random.randint(1, Max_Width()))
         #print("req starting at %s for %s" % (proxy, req.domain()))
         #print(req.url())
         res = proxy_db(proxy).request(req)
