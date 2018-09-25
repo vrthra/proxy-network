@@ -20,7 +20,7 @@ def max_width():
 def get_degree():
     """ The number of parent servers per proxy """
     return 2
-def rand(i): return random.randint(0,i-1)
+
 def unique(lst): return list(set(lst))
 
 def proxy_name(lvl, rank): return lvl*LEVEL_CONST + rank
@@ -148,10 +148,10 @@ class QPolicy(Policy):
         # * In the limit, the learning policy is greedy wrt the
         #   learned Q function with probability 1
         self._t += 1
-        s = rand(self._t) + 1
+        s = random.randint(1, self._t)
         if s == 1: # Exploration
             len_ = len(topology[self._proxy.name()]['next'])
-            s = rand(len_)
+            s = random.randint(0, len_-1)
             path.append('*')
             return topology[self._proxy.name()]['next'][s]
         else: # Greedy
@@ -188,7 +188,7 @@ class ProxyNode:
     def policy(self): return self._policy
 
     def load(self):
-        v = rand(2)
+        v = random.randint(0, 1)
         if v == 0:
             self._load += 1
         else:
@@ -206,7 +206,7 @@ class ProxyNode:
         if self._load >= 100:
             # reset the load now because after denying the requests the load
             # should be lower.
-            self._load = rand(100)+1
+            self._load = random.randint(1, 100)
             res = HTTPResponse(req.domain(),req.url(),
                     'Can not service', {'last_proxy': self._name}, 501)
             my_reward = self._reward.get_reward('NoService')
@@ -302,10 +302,10 @@ class Network:
         direct_parent = p_id - LEVEL_CONST
         parent_proxies = [direct_parent]
         for i in range(1,num_parents+1):
-            another_rank = (rank + rand(num_parents)) % network_width + 1
+            another_rank = (rank + random.randint(0, num_parents-1)) % network_width + 1
             another_id = another_rank + (lvl-1)*LEVEL_CONST
             parent_proxies.append(another_id)
-        return unique(sorted(parent_proxies))
+        return unique(parent_proxies)
 
     def populate_origin_servers(self):
         # construct the origin servers
@@ -348,14 +348,14 @@ class Network:
         print("degree = %d/%d = %f" % (parents, count, (parents * 1.0)/(count * 1.0)))
         return network
     def load(self):
-        return rand(100)+1
+        return random.randint(1,100)
     
     def user_req(self, req):
         #---------------------------------------
         # Modify here for first level proxy
         # get our first level proxy. Here it is 10X
         #---------------------------------------
-        proxy = proxy_name(max_level(), rand(max_width()) + 1)
+        proxy = proxy_name(max_level(), random.randint(1, max_width()))
         #print("req starting at %s for %s" % (proxy, req.domain()))
         #print(req.url())
         res = proxy_db(proxy).request(req)
@@ -384,8 +384,8 @@ for i in range(1,iter_total+1):
     count = 0
     total = 100
     for j in range(1,total+1):
-        page = "path-%s/page.html" % (rand(10)+1)
-        server_id = rand(10) + 1
+        page = "path-%s/page.html" % (random.randint(1,10))
+        server_id = random.randint(1,10)
         req = HTTPRequest(str(server_id), page)
         res = n.user_req(req)
         trejectory = ''.join([j + '>' for j in path]) + ("*" if res.status() == 200 else "X") + "  " + req.domain()
